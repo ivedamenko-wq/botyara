@@ -1,0 +1,12 @@
+config.py
+__pycache__/
+*.pyc
+
+# виртуальное окружение (развёрнуто в корне проекта)
+Lib/
+Scripts/
+Include/
+pyvenv.cfg
+
+*.db
+.claude/

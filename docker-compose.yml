@@ -1,0 +1,12 @@
+services:
+  bot:
+    image: botyara:latest
+    build: .
+    restart: unless-stopped
+    volumes:
+      - db_data:/app/data
+    environment:
+      - DB_FILE=/app/data/debts.db
+
+volumes:
+  db_data:

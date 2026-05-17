@@ -1,0 +1,9 @@
+.git
+__pycache__
+*.pyc
+*.db
+Lib/
+Scripts/
+Include/
+pyvenv.cfg
+.github/
