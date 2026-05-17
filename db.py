@@ -65,7 +65,34 @@ def init_db():
                 nickname    TEXT NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS chat_ids (
+                username    TEXT PRIMARY KEY,
+                chat_id     INTEGER NOT NULL
+            )
+        """)
         conn.commit()
+
+
+# ─── chat_ids ─────────────────────────────────────────────────────────────────
+
+def save_chat_id(username: str, chat_id: int):
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.execute(
+            "INSERT INTO chat_ids (username, chat_id) VALUES (?, ?)"
+            " ON CONFLICT(username) DO UPDATE SET chat_id = excluded.chat_id",
+            (username.lower(), chat_id),
+        )
+        conn.commit()
+
+
+def get_chat_id(username: str) -> int | None:
+    with sqlite3.connect(DB_FILE) as conn:
+        row = conn.execute(
+            "SELECT chat_id FROM chat_ids WHERE username = ?",
+            (username.lower(),),
+        ).fetchone()
+    return row[0] if row else None
 
 
 # ─── nicknames ───────────────────────────────────────────────────────────────

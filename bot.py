@@ -23,6 +23,7 @@ ST_IDLE      = "idle"
 ST_AMOUNT    = "ask_amount"
 ST_DESC      = "ask_desc"
 ST_NICK      = "ask_nick"
+ST_MSG       = "ask_msg"
 
 # ─── клавиатуры ──────────────────────────────────────────────────────────────
 
@@ -42,6 +43,7 @@ def main_menu_kb() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton("🏷 Псевдонимы",  callback_data="action:nicks"),
+            InlineKeyboardButton("✉️ Написать",    callback_data="action:msg"),
         ],
     ])
 
@@ -120,6 +122,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return await deny(update)
     reset(ctx)
     me     = username(update)
+    db.save_chat_id(me, update.effective_chat.id)
     friend = other_user(me)
     nicks  = db.get_nicks()
     await send_menu(
@@ -253,6 +256,23 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 lines.append(f"  • {err}")
             await query.edit_message_text("\n".join(lines), reply_markup=BACK_KB)
 
+    # ── сообщение другу ──
+    elif data == "action:msg":
+        me     = username(update)
+        friend = other_user(me)
+        friend_chat_id = db.get_chat_id(friend)
+        if not friend_chat_id:
+            await query.edit_message_text(
+                f"⚠️ {disp(friend)} ещё не запускал бота — некуда отправлять.",
+                reply_markup=BACK_KB,
+            )
+            return
+        ctx.user_data["state"] = ST_MSG
+        await query.edit_message_text(
+            f"✉️ Напиши сообщение для {disp(friend)}:",
+            reply_markup=cancel_kb(),
+        )
+
     # ── псевдонимы ──
     elif data == "action:nicks":
         me     = username(update)
@@ -281,6 +301,7 @@ async def message_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
         return await deny(update)
 
+    db.save_chat_id(username(update), update.effective_chat.id)
     state = ctx.user_data.get("state", ST_IDLE)
 
     if state == ST_AMOUNT:
@@ -289,6 +310,8 @@ async def message_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await _process_desc(update, ctx)
     elif state == ST_NICK:
         await _process_nick(update, ctx)
+    elif state == ST_MSG:
+        await _process_msg(update, ctx)
     else:
         await send_menu(update.message)
 
@@ -341,6 +364,31 @@ async def _save_and_show(query, ctx: ContextTypes.DEFAULT_TYPE, desc: str):
         f"✅ {disp(debtor, nicks)} должен {disp(payer, nicks)} {fmt_amount(amount)}{label}",
         reply_markup=main_menu_kb(),
     )
+
+# ─── отправка сообщения другу ────────────────────────────────────────────────
+
+async def _process_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    me     = username(update)
+    friend = other_user(me)
+    nicks  = db.get_nicks()
+    text   = update.message.text.strip()
+
+    friend_chat_id = db.get_chat_id(friend)
+    if not friend_chat_id:
+        reset(ctx)
+        await update.message.reply_text(
+            f"⚠️ {disp(friend, nicks)} ещё не запускал бота.",
+            reply_markup=main_menu_kb(),
+        )
+        return
+
+    await update.get_bot().send_message(
+        chat_id=friend_chat_id,
+        text=f"✉️ {disp(me, nicks)}:\n\n{text}",
+    )
+    reset(ctx)
+    await update.message.reply_text("✅ Сообщение отправлено.", reply_markup=main_menu_kb())
+
 
 # ─── ввод псевдонима ─────────────────────────────────────────────────────────
 
