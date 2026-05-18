@@ -269,7 +269,7 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
         ctx.user_data["state"] = ST_MSG
         await query.edit_message_text(
-            f"✉️ Напиши сообщение для {disp(friend)}:",
+            f"✉️ Напиши сообщение или отправь фото для {disp(friend)}:",
             reply_markup=cancel_kb(),
         )
 
@@ -295,7 +295,7 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         reset(ctx)
         await query.edit_message_text(f"✅ Псевдоним @{me} удалён.", reply_markup=BACK_KB)
 
-# ─── роутер текстовых сообщений ──────────────────────────────────────────────
+# ─── роутер сообщений ────────────────────────────────────────────────────────
 
 async def message_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not is_allowed(update):
@@ -311,6 +311,19 @@ async def message_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif state == ST_NICK:
         await _process_nick(update, ctx)
     elif state == ST_MSG:
+        await _process_msg(update, ctx)
+    else:
+        await send_menu(update.message)
+
+
+async def photo_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Отдельный роутер для фото — работает только в состоянии ST_MSG."""
+    if not is_allowed(update):
+        return await deny(update)
+
+    db.save_chat_id(username(update), update.effective_chat.id)
+
+    if ctx.user_data.get("state") == ST_MSG:
         await _process_msg(update, ctx)
     else:
         await send_menu(update.message)
@@ -371,7 +384,7 @@ async def _process_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     me     = username(update)
     friend = other_user(me)
     nicks  = db.get_nicks()
-    text   = update.message.text.strip()
+    bot    = update.get_bot()
 
     friend_chat_id = db.get_chat_id(friend)
     if not friend_chat_id:
@@ -382,10 +395,25 @@ async def _process_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    await update.get_bot().send_message(
-        chat_id=friend_chat_id,
-        text=f"✉️ {disp(me, nicks)}:\n\n{text}",
-    )
+    header = f"✉️ {disp(me, nicks)}:"
+
+    if update.message.photo:
+        # Берём фото наилучшего качества (последний элемент списка)
+        photo_id = update.message.photo[-1].file_id
+        caption  = update.message.caption or ""
+        full_caption = f"{header}\n\n{caption}" if caption else header
+        await bot.send_photo(
+            chat_id=friend_chat_id,
+            photo=photo_id,
+            caption=full_caption,
+        )
+    else:
+        text = update.message.text.strip()
+        await bot.send_message(
+            chat_id=friend_chat_id,
+            text=f"{header}\n\n{text}",
+        )
+
     reset(ctx)
     await update.message.reply_text("✅ Сообщение отправлено.", reply_markup=main_menu_kb())
 
@@ -422,6 +450,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_router))
+    app.add_handler(MessageHandler(filters.PHOTO, photo_router))
 
     logger.info("Бот запущен. Разрешённые пользователи: %s", ALLOWED_USERS)
     app.run_polling(drop_pending_updates=True)
