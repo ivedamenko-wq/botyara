@@ -24,6 +24,7 @@ ST_AMOUNT    = "ask_amount"
 ST_DESC      = "ask_desc"
 ST_NICK      = "ask_nick"
 ST_MSG       = "ask_msg"
+ST_PAY       = "ask_pay"
 
 # ─── клавиатуры ──────────────────────────────────────────────────────────────
 
@@ -32,6 +33,9 @@ def main_menu_kb() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton("💸 Я должен",    callback_data="action:iowe"),
             InlineKeyboardButton("💳 Мне должны",  callback_data="action:heowe"),
+        ],
+        [
+            InlineKeyboardButton("💰 Внести платёж", callback_data="action:pay"),
         ],
         [
             InlineKeyboardButton("⚖️ Баланс",      callback_data="action:balance"),
@@ -170,6 +174,37 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "action:skip_desc":
         if ctx.user_data.get("state") == ST_DESC:
             await _save_and_show(query, ctx, desc="")
+
+    # ── внести платёж ──
+    elif data == "action:pay":
+        debtor, creditor, amount = db.get_net_balance()
+        nicks = db.get_nicks()
+        me    = username(update)
+
+        if amount == 0:
+            await query.edit_message_text(
+                "🟢 Долгов нет — платить нечего.",
+                reply_markup=BACK_KB,
+            )
+            return
+
+        # Платёж вносит тот, кто должен
+        if debtor.lower() != me.lower():
+            await query.edit_message_text(
+                f"🟢 Ты ничего не должен — это {disp(debtor, nicks)} должен тебе {fmt_amount(amount)}.",
+                reply_markup=BACK_KB,
+            )
+            return
+
+        ctx.user_data["state"]    = ST_PAY
+        ctx.user_data["debtor"]   = debtor
+        ctx.user_data["creditor"] = creditor
+        ctx.user_data["debt"]     = amount
+        await query.edit_message_text(
+            f"💰 Твой долг: {fmt_amount(amount)} → {disp(creditor, nicks)}\n\n"
+            f"Сколько вносишь? (не больше {fmt_amount(amount)}):",
+            reply_markup=cancel_kb(),
+        )
 
     # ── баланс ──
     elif data == "action:balance":
@@ -312,6 +347,8 @@ async def message_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await _process_nick(update, ctx)
     elif state == ST_MSG:
         await _process_msg(update, ctx)
+    elif state == ST_PAY:
+        await _process_pay(update, ctx)
     else:
         await send_menu(update.message)
 
@@ -388,6 +425,47 @@ async def _process_msg(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     reset(ctx)
     await update.message.reply_text("✅ Сообщение отправлено.", reply_markup=main_menu_kb())
+
+
+# ─── внесение платежа ────────────────────────────────────────────────────────
+
+async def _process_pay(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip().replace(",", ".").replace(" ", "")
+    try:
+        pay_amount = float(text)
+        if pay_amount <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("❌ Некорректная сумма. Введи число больше 0:", reply_markup=cancel_kb())
+        return
+
+    debtor   = ctx.user_data["debtor"]
+    creditor = ctx.user_data["creditor"]
+    debt     = ctx.user_data["debt"]
+    nicks    = db.get_nicks()
+
+    if pay_amount > debt:
+        await update.message.reply_text(
+            f"❌ Сумма превышает долг ({fmt_amount(debt)}). Введи корректную сумму:",
+            reply_markup=cancel_kb(),
+        )
+        return
+
+    # Платёж — это транзакция в обратную сторону: должник становится плательщиком
+    db.add_transaction(debtor, creditor, pay_amount, "💰 Платёж")
+
+    remaining = round(debt - pay_amount, 2)
+    reset(ctx)
+
+    if remaining == 0:
+        result = "🟢 Долг полностью погашен!"
+    else:
+        result = f"Остаток долга: {fmt_amount(remaining)}"
+
+    await update.message.reply_text(
+        f"✅ Платёж {fmt_amount(pay_amount)} зафиксирован.\n{result}",
+        reply_markup=main_menu_kb(),
+    )
 
 
 # ─── ввод псевдонима ─────────────────────────────────────────────────────────
